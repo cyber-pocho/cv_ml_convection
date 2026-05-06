@@ -1,0 +1,14 @@
+numpy>=1.23.5
+scipy>=1.10.1
+pandas>=1.5.3
+
+opencv-python>=4.7.0.72
+opencv-contrib-python>=4.7.0.72  # Includes extra modules like ArUco, tracking, etc.
+scikit-image>=0.20.0
+
+# Machine Learning & Deep Learning
+
+# Visualization
+matplotlib>=3.7.1
+seaborn>=0.12.2
+plotly>=5.14.1
