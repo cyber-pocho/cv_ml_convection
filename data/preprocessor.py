@@ -53,7 +53,7 @@ class FramePreprocessor:
     SPN: 
         PrepLara el frame raw para la deteccion de las particulas. 
     """
-    def __init__(self, config)   
+    def __init__(self, config):   
         self.cfg=config
         self.bg_subtractor=cv2.createBackgroundSubtractorMOG2(
             history=config.bg_history, 
