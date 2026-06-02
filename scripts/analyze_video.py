@@ -28,6 +28,7 @@ matplotlib.use("Agg")   # write to file; no display needed
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
+from matplotlib.collections import LineCollection
 
 from src.config import RBConfig, CameraView
 from src.piv import compute_piv
@@ -314,18 +315,37 @@ if piv_available:
 try:
     last_frame = enhanced_frames[-1] if enhanced_frames else None
 
+    def _quiver_gradient(ax, XX, YY, U, V, cmap_name="cool"):
+        """Quiver arrows coloured by local speed magnitude."""
+        speed_2d = np.sqrt(U ** 2 + V ** 2)
+        speed_max = max(np.percentile(speed_2d, 95), 1e-3)
+        norm_q = Normalize(vmin=0, vmax=speed_max)
+        q = ax.quiver(XX, YY, U, -V, speed_2d,
+                      cmap=cmap_name, norm=norm_q,
+                      scale=speed_max * 20, width=0.003, alpha=0.9)
+        return q, speed_max
+
+    def _spectrum_gradient(ax, k, E, cmap_name="plasma"):
+        """Draw the E(k) curve as a gradient line (low-k → high-k)."""
+        lk, lE = np.log10(k), np.log10(E)
+        pts = np.array([lk, lE]).T.reshape(-1, 1, 2)
+        segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
+        t = np.linspace(0, 1, len(segs))
+        lc = LineCollection(segs, array=t, cmap=cmap_name, lw=2)
+        ax.add_collection(lc)
+        ax.set_xscale("log"); ax.set_yscale("log")
+        ax.set_xlim(k.min(), k.max()); ax.set_ylim(E.min() * 0.5, E.max() * 2)
+        return lc
+
     # --- velocity field: quiver overlaid on last enhanced frame
     if piv_available and last_frame is not None and u_mean is not None:
         fig, ax = plt.subplots(figsize=(8, 6))
         ax.imshow(last_frame, cmap="gray", origin="upper")
-        # convert mm grid positions back to pixel space for pixel-aligned overlay
         X_px = piv_x * cfg.px_per_mm
         Y_px = piv_y * cfg.px_per_mm
         XX, YY = np.meshgrid(X_px, Y_px)
-        # negate v because image y grows downward while quiver V grows upward
-        speed_max = max(np.percentile(np.sqrt(u_mean**2 + v_mean**2), 95), 1e-3)
-        ax.quiver(XX, YY, u_mean, -v_mean,
-                  scale=speed_max * 20, width=0.003, color="cyan", alpha=0.85)
+        q, smax = _quiver_gradient(ax, XX, YY, u_mean, v_mean)
+        plt.colorbar(q, ax=ax, label="speed  (mm/s)")
         ax.set_title("Time-averaged velocity field (PIV)")
         ax.axis("off")
         fig.tight_layout()
@@ -337,32 +357,35 @@ try:
         fig, ax = plt.subplots(figsize=(7, 5))
         vmax = np.percentile(np.abs(omega), 98)
         im = ax.imshow(omega, cmap="RdBu_r", vmin=-vmax, vmax=vmax, origin="upper")
-        plt.colorbar(im, ax=ax, label="ω  [mm/s per mm]")
+        plt.colorbar(im, ax=ax, label="ω  [s⁻¹]")
         ax.set_title("Vorticity  ω = ∂v/∂x − ∂u/∂y")
         fig.tight_layout()
         fig.savefig(out_dir / "vorticity.png", dpi=150)
         plt.close(fig)
 
-    # --- kinetic energy spectrum
+    # --- kinetic energy spectrum: gradient line from low-k (purple) to high-k (yellow)
     if k_spec is not None and E_k is not None:
-        fig, ax = plt.subplots(figsize=(6, 5))
-        ax.loglog(k_spec, E_k, "b-", lw=1.5, label="E(k)")
-        ax.loglog(k_spec, np.exp(intercept) * k_spec ** slope, "r--",
-                  lw=1.2, label=f"fit  k^{slope:.2f}")
-        # k^(-11/5) reference line, normalised to pass through the spectral midpoint
         k_mid = k_spec[len(k_spec) // 2]
         E_mid = E_k[len(E_k) // 2]
         ref = E_mid / k_mid ** (-11 / 5) * k_spec ** (-11 / 5)
+
+        fig, ax = plt.subplots(figsize=(6, 5))
+        lc = _spectrum_gradient(ax, k_spec, E_k, "plasma")
+        sm_spec = ScalarMappable(cmap="plasma", norm=Normalize(0, 1))
+        sm_spec.set_array([])
+        plt.colorbar(sm_spec, ax=ax, label="low k → high k")
+        ax.loglog(k_spec, np.exp(intercept) * k_spec ** slope, "--",
+                  color="tomato", lw=1.2, label=f"fit  $k^{{{slope:.2f}}}$")
         ax.loglog(k_spec, ref, "k:", lw=1.0, label=r"$k^{-11/5}$ ref")
-        ax.set_xlabel("wavenumber k")
-        ax.set_ylabel("E(k)")
+        ax.set_xlabel("wavenumber $k$")
+        ax.set_ylabel("$E(k)$")
         ax.set_title("Kinetic energy spectrum")
-        ax.legend()
+        ax.legend(fontsize=9)
         fig.tight_layout()
         fig.savefig(out_dir / "energy_spectrum.png", dpi=150)
         plt.close(fig)
 
-    # --- particle trajectories, colour = mean speed
+    # --- particle trajectories: each segment coloured by instantaneous speed
     if last_frame is not None and velocity_records:
         speed_by_id = defaultdict(list)
         for rec in velocity_records:
@@ -371,23 +394,34 @@ try:
         mean_speed = {pid: float(np.mean(s)) for pid, s in speed_by_id.items()}
 
         all_speeds = list(mean_speed.values())
-        norm = Normalize(vmin=np.percentile(all_speeds, 5),
-                         vmax=np.percentile(all_speeds, 95))
-        cmap = plt.cm.plasma
+        traj_norm = Normalize(vmin=np.percentile(all_speeds, 5),
+                              vmax=np.percentile(all_speeds, 95))
+        traj_cmap = plt.cm.plasma
 
         fig, ax = plt.subplots(figsize=(8, 6))
         ax.imshow(last_frame, cmap="gray", origin="upper")
         for tid, positions in trajectories.items():
             if len(positions) < 2:
                 continue
-            xs = [p[0] for p in positions]
-            ys = [p[1] for p in positions]
-            ax.plot(xs, ys, color=cmap(norm(mean_speed.get(tid, 0.0))),
-                    lw=0.8, alpha=0.7)
-        sm = ScalarMappable(norm=norm, cmap=cmap)
+            xs = np.array([p[0] for p in positions])
+            ys = np.array([p[1] for p in positions])
+            # colour each segment by instantaneous speed along the trajectory
+            spd = speed_by_id.get(tid, [mean_speed.get(tid, 0.0)])
+            seg_speeds = np.interp(
+                np.linspace(0, 1, len(xs) - 1),
+                np.linspace(0, 1, max(len(spd), 1)),
+                spd[:len(xs) - 1] if len(spd) >= len(xs) - 1 else spd,
+            )
+            pts = np.array([xs, ys]).T.reshape(-1, 1, 2)
+            segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
+            lc_t = LineCollection(segs, array=seg_speeds, cmap="plasma",
+                                  norm=traj_norm, lw=0.8, alpha=0.75)
+            ax.add_collection(lc_t)
+
+        sm = ScalarMappable(norm=traj_norm, cmap=traj_cmap)
         sm.set_array([])
-        plt.colorbar(sm, ax=ax, label="mean speed  (mm/s)")
-        ax.set_title("Particle trajectories  (colour = mean speed)")
+        plt.colorbar(sm, ax=ax, label="speed  (mm/s)")
+        ax.set_title("Particle trajectories  (colour = instantaneous speed)")
         ax.axis("off")
         fig.tight_layout()
         fig.savefig(out_dir / "trajectories.png", dpi=150)
@@ -398,8 +432,8 @@ try:
         fig, ax = plt.subplots(figsize=(7, 5))
         dmax = np.percentile(np.abs(div), 98)
         im = ax.imshow(div, cmap="PiYG", vmin=-dmax, vmax=dmax, origin="upper")
-        plt.colorbar(im, ax=ax, label="∇·u")
-        ax.set_title(f"Divergence  (RMS = {div_rms:.4f})")
+        plt.colorbar(im, ax=ax, label="∇·u  [s⁻¹]")
+        ax.set_title(f"Divergence  (RMS = {div_rms:.4f} s⁻¹)")
         fig.tight_layout()
         fig.savefig(out_dir / "divergence.png", dpi=150)
         plt.close(fig)
@@ -412,25 +446,23 @@ try:
         X_px = piv_x * cfg.px_per_mm
         Y_px = piv_y * cfg.px_per_mm
         XX, YY = np.meshgrid(X_px, Y_px)
-        speed_max = max(np.percentile(np.sqrt(u_mean**2 + v_mean**2), 95), 1e-3)
-        axes[0].quiver(XX, YY, u_mean, -v_mean,
-                       scale=speed_max * 20, width=0.004, color="cyan", alpha=0.85)
+        q0, _ = _quiver_gradient(axes[0], XX, YY, u_mean, v_mean)
+        fig.colorbar(q0, ax=axes[0], fraction=0.046, pad=0.04, label="mm/s")
         axes[0].set_title("Velocity field")
         axes[0].axis("off")
 
         vmax = np.percentile(np.abs(omega), 98)
         im2 = axes[1].imshow(omega, cmap="RdBu_r", vmin=-vmax, vmax=vmax, origin="upper")
-        fig.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
+        fig.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04, label="s⁻¹")
         axes[1].set_title("Vorticity")
         axes[1].axis("off")
 
-        axes[2].loglog(k_spec, E_k, "b-", lw=1.5)
-        axes[2].loglog(k_spec, np.exp(intercept) * k_spec ** slope, "r--",
-                       lw=1.2, label=f"k^{slope:.2f}")
+        _spectrum_gradient(axes[2], k_spec, E_k, "plasma")
         ref = E_mid / k_mid ** (-11 / 5) * k_spec ** (-11 / 5)
+        axes[2].loglog(k_spec, np.exp(intercept) * k_spec ** slope, "--",
+                       color="tomato", lw=1.2, label=f"$k^{{{slope:.2f}}}$")
         axes[2].loglog(k_spec, ref, "k:", lw=1.0, label=r"$k^{-11/5}$")
-        axes[2].set_xlabel("k")
-        axes[2].set_ylabel("E(k)")
+        axes[2].set_xlabel("$k$"); axes[2].set_ylabel("$E(k)$")
         axes[2].set_title("Energy spectrum")
         axes[2].legend(fontsize=8)
 
@@ -438,11 +470,19 @@ try:
         fig.savefig(out_dir / "rbc_summary.png", dpi=150)
         plt.close(fig)
 
-    # --- speed histogram
+    # --- speed histogram: bars coloured by speed value (viridis gradient)
     if velocity_records:
-        speeds = [np.sqrt(r["vx"] ** 2 + r["vy"] ** 2) for r in velocity_records]
+        speeds = np.array([np.sqrt(r["vx"] ** 2 + r["vy"] ** 2) for r in velocity_records])
         fig, ax = plt.subplots(figsize=(6, 4))
-        ax.hist(speeds, bins=50, color="steelblue", edgecolor="white", linewidth=0.4)
+        counts, bin_edges, patches = ax.hist(speeds, bins=50, edgecolor="white", linewidth=0.3)
+        bin_centres = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        hist_norm = Normalize(vmin=bin_centres.min(), vmax=bin_centres.max())
+        hist_cmap = plt.cm.viridis
+        for patch, bc in zip(patches, bin_centres):
+            patch.set_facecolor(hist_cmap(hist_norm(bc)))
+        sm_h = ScalarMappable(norm=hist_norm, cmap=hist_cmap)
+        sm_h.set_array([])
+        plt.colorbar(sm_h, ax=ax, label="speed bin  (mm/s)")
         ax.set_xlabel("Speed  (mm/s)")
         ax.set_ylabel("Count")
         ax.set_title("PTV particle speed distribution")
@@ -453,6 +493,7 @@ try:
     print(f"Figures saved to {out_dir}/")
 
 except Exception as e:
+    import traceback; traceback.print_exc()
     print(f"WARNING: Step 6 failed — {e}")
 
 
