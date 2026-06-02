@@ -22,6 +22,9 @@ class RBConfig:
     container_height_mm: float = 20.0  # H in RBC: hot-plate to cold-plate separation (wall-normal extent)
     container_width_mm: float  = 80.0  # horizontal extent of the visible flow field
 
+    # --- ROI
+    roi_fraction: float = 0.6   # central fraction of frame to keep; excludes curved dish edges
+
     # --- Preprocessing
     gaussian_ksize: int = 5     # Gaussian blur kernel size; suppresses pixel noise before CLAHE
     bg_history: int = 50        # frames MOG2 averages over to build the background model

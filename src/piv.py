@@ -42,9 +42,9 @@ def compute_piv(frame1: np.ndarray, frame2: np.ndarray, cfg: RBConfig) -> dict:
             # phaseCorrelate returns (dx, dy) sub-pixel displacement and a peak response
             (dx, dy), _response = cv2.phaseCorrelate(win1, win2)
 
-            # px displacement × (mm/px) × (frames/s) = mm/s
-            u_grid[row_idx, col_idx] = dx * cfg.px_per_mm * cfg.fps
-            v_grid[row_idx, col_idx] = dy * cfg.px_per_mm * cfg.fps
+            # px displacement / (px/mm) × (frames/s) = mm/s
+            u_grid[row_idx, col_idx] = dx / cfg.px_per_mm * cfg.fps
+            v_grid[row_idx, col_idx] = dy / cfg.px_per_mm * cfg.fps
 
     # Window centres in mm — physical coordinates of each measurement point
     x_mm = np.array([xs + win // 2 for xs in x_starts], dtype=float) / cfg.px_per_mm

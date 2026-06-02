@@ -87,9 +87,9 @@ def compute_velocities(trajectories: dict, cfg: RBConfig) -> list:
             if f2 - f1 != 1:
                 continue
 
-            # px displacement × (mm/px) × (frames/s) = mm/s
-            vx = (x2 - x1) * cfg.px_per_mm * cfg.fps
-            vy = (y2 - y1) * cfg.px_per_mm * cfg.fps
+            # px displacement / (px/mm) × (frames/s) = mm/s
+            vx = (x2 - x1) / cfg.px_per_mm * cfg.fps
+            vy = (y2 - y1) / cfg.px_per_mm * cfg.fps
 
             velocity_records.append({
                 "x": x1,
