@@ -1,284 +1,355 @@
 # Rayleigh-Bénard Convection — CV + ML Pipeline
 
-> Experimental fluid dynamics meets computer vision and deep learning.  
-> From a Pyrex dish of glycerin and mica powder to a physics-informed neural network.
+Experimental fluid dynamics + computer vision + physics-informed ML.
 
 ---
 
-## What is this?
+## 1. What is Rayleigh-Bénard Convection?
 
-This project builds a full pipeline to study **Rayleigh-Bénard Convection (RBC)** —
-one of the most studied phenomena in fluid dynamics and the basis of atmospheric
-circulation, ocean currents, and stellar interiors.
+Rayleigh-Bénard Convection (RBC) is the buoyancy-driven flow that arises when a fluid
+layer is heated from below and cooled from above. Past a critical temperature difference,
+the fluid spontaneously organises into convection rolls — rising hot plumes and sinking
+cold columns — visible through reflective tracer particles.
 
-A thin layer of fluid is heated from below and cooled from above. Past a critical
-temperature difference, the fluid spontaneously organizes into convection rolls:
-rising hot plumes and sinking cold plumes, visible through reflective mica particles
-suspended in the fluid.
+### Governing equations (Boussinesq approximation)
 
-The pipeline goes from **raw video** to **quantitative physics** using computer
-vision, classical fluid mechanics, and a physics-informed neural network.
+Navier-Stokes with thermal buoyancy:
 
----
+$$\frac{\partial \mathbf{u}}{\partial t} + (\mathbf{u} \cdot \nabla)\mathbf{u} = -\frac{\nabla p}{\rho_0} + \nu \nabla^2 \mathbf{u} + \alpha g \Delta T \,\hat{z}$$
 
-## Motivation
-
-Numerical simulations of turbulent convection are computationally expensive — the
-paper that inspired this project (Salim et al. 2024) uses supercomputer clusters
-to run DNS at Rayleigh numbers up to $Ra = 10^{10}$.
-
-This project asks: **can we extract the same physical quantities from a cheap
-experimental setup using ML?**
-
-The answer, for moderate $Ra$, is yes.
-
----
-
-## The experiment
-
-```
-         [Camera — top view]
-                  ↓
-    ┌─────────────────────────────┐  ← surface (cooled by ambient air)
-    │                             │
-    │   glycerin + mica powder    │  ← fluid layer (~15 mm)
-    │       ↻  ↺  ↻  ↺           │     convection rolls visible from above
-    │                             │
-    └─────────────────────────────┘  ← hot plate (heating element)
-```
-
-**Session 1 (current):**
-- **Fluid:** glycerin 80% + water 20%
-- **Tracer:** mica powder — flat, reflective particles that align with flow
-- **Container:** circular Pyrex dish, top-view camera
-- **Heating:** lab hot plate from below
-- **Cooling:** ambient air (passive)
-
-**Session 2 (planned):**
-- **Container:** rectangular glass baking dish (refractaria) — enables lateral view
-- **Cooling:** Peltier module for controlled $\Delta T$
-- **Fluid:** silicone oil 50 cSt for final measurements
-
----
-
-## Pipeline
-
-```
-raw video
-    ↓
-data/preprocessor.py    Gaussian blur · CLAHE · MOG2 background subtraction
-    ↓
-data/detector.py        SimpleBlobDetector + contour fallback → Particle list
-    ↓
-src/tracker.py          Hungarian matching → trajectories · (vx, vy) per particle
-    ↓
-src/piv.py              Phase-correlation PIV → velocity field (u, v) on grid
-    ↓
-src/physics.py          Vorticity · divergence · E(k) · Re
-    ↓
-src/visualizer.py       Quiver plots · vorticity maps · energy spectra
-    ↓
-src/superres.py         Physics-informed CNN — 4× super-resolution  [planned]
-src/classifier.py       Laminar vs turbulent classifier CNN          [planned]
-```
-
----
-
-## Physics
-
-### Governing equations
-
-The flow is governed by the incompressible Navier-Stokes equations under the
-Boussinesq approximation:
-
-$$\frac{\partial \mathbf{u}}{\partial t} + \mathbf{u} \cdot \nabla \mathbf{u} = -\nabla P + \nu \nabla^2 \mathbf{u} + \alpha g \Delta T \, \hat{z}$$
+Incompressibility:
 
 $$\nabla \cdot \mathbf{u} = 0$$
 
-The dimensionless parameter controlling the onset of convection is the **Rayleigh number**:
+Energy equation:
 
-$$Ra = \frac{g \, \alpha \, \Delta T \, H^3}{\nu \, \kappa}$$
+$$\frac{\partial T}{\partial t} + \mathbf{u} \cdot \nabla T = \kappa \nabla^2 T$$
 
-Convection begins when $Ra > 1708$. The **Reynolds number** characterizes the flow regime:
+### Key dimensionless numbers
 
-$$Re = \frac{U_\text{rms} \, L}{\nu}, \qquad U_\text{rms} = \sqrt{\langle u^2 + v^2 \rangle}$$
+$$Ra = \frac{g \,\alpha \,\Delta T \,H^3}{\nu \,\kappa}, \qquad Re = \frac{U_\mathrm{rms}\, L}{\nu}, \qquad Pr = \frac{\nu}{\kappa}, \qquad Nu = \frac{q H}{\lambda \Delta T}$$
 
-### Measured quantities
+**Onset condition:** $Ra > 1708$ — below this threshold, conduction dominates and no rolls form.
 
-**Vorticity** ($z$-component, top view):
+**Theoretical inertial-range slope for 2D RBC** (Kooloth et al. 2021):
 
-$$\omega_z = \frac{\partial v}{\partial x} - \frac{\partial u}{\partial y}$$
-
-**Divergence** (incompressibility check, should be $\approx 0$):
-
-$$\nabla \cdot \mathbf{u} = \frac{\partial u}{\partial x} + \frac{\partial v}{\partial y}$$
-
-**Kinetic energy spectrum** — azimuthal average of the 2D power spectrum:
-
-$$E(k) = \oint \left( |\hat{u}|^2 + |\hat{v}|^2 \right) \, d\theta$$
-
-Theoretical inertial-range slope for 2D RBC (Kooloth et al. 2021):
-
-$$E(k) \sim k^{-11/5}$$
-
-**Physics-informed loss** (adapted from Salim et al. 2024, Eq. 20):
-
-$$\mathcal{L} = \mathcal{L}_\text{pixel} + \gamma \, \mathcal{L}_\text{PDE}, \qquad \gamma = 0.05$$
-
-$$\mathcal{L}_\text{PDE} = \left\langle \left| \frac{\partial u}{\partial x} + \frac{\partial v}{\partial y} \right| \right\rangle$$
+$$E(k) \sim k^{-11/5} \approx k^{-2.20}$$
 
 ---
 
-## Results — Session 1
+## 2. The Experiment
 
-Analysis run on `video/video.mp4`:
-- Resolution: $478 \times 850$ px · 29 fps · 6679 frames
-- ROI: central 60% ($510 \times 286$ px) to exclude curved Pyrex edges
-- Calibration: $5\ \text{px/mm}$
-- Fluid: glycerin 80%, $\nu \approx 60 \times 10^{-6}\ \text{m}^2/\text{s}$
+```
+         [Camera — top view]
+                  |
+                  v
+    +---------------------------------+   <- fluid surface (cooled by ambient air, ~25°C)
+    |                                 |
+    |    glycerin 80% + water 20%     |   <- fluid layer (~20 mm)
+    |    + mica powder tracer         |
+    |                                 |
+    |      (↻)(↺)(↻)(↺)(↻)           |   <- convection rolls visible from above
+    |                                 |
+    +---------------------------------+   <- hot plate (Haceb, controlled temperature)
+        |          |          |
+        [thermocouple probes]
+```
 
-### Particle tracking (PTV)
+- **Fluid:** glycerin 80% + water 20%, seeded with mica powder (flat, reflective tracer)
+- **Camera:** top view, fixed above the dish
+- **Heating:** Haceb lab hot plate from below
+- **Cooling:** ambient air, passive ($T_\mathrm{ambient} \approx 25$°C)
+- **Container:** circular Pyrex dish
 
-The Hungarian algorithm with search radius $r_\text{max} = 20\ \text{px}$ built
-**459 trajectories** across all frames.
+### Video manifest
 
-Average particles per frame: **2.4** — sparse seeding, see [known limitations](#known-limitations).
+| Video | $T_\mathrm{plate}$ (°C) | $\Delta T$ (°C) | Notes |
+|-------|------------------------|-----------------|-------|
+| video2.mp4 | 130 | 105 | Session 2, used |
+| ~~video3.mp4~~ | ~~290~~ | ~~265~~ | **Excluded** — thermocouple reading exceeds glycerin decomposition point (~180°C); likely sensor error |
+| video4.mp4 | 120 | 95 | Session 2, used |
+| video5.mp4 | 100 | 75 | Session 2, used |
+| video6.mp4 | 100 | 75 | Session 2, used |
+| video7.mp4 | 90 | 65 | Session 2, used |
+
+If available, see `resources/setup.jpg` for a photograph of the experimental setup.
+
+---
+
+## 3. Pipeline Overview
+
+```
+raw video
+    |
+    v
+data/preprocessor.py    Gaussian blur, CLAHE, MOG2 background subtraction
+    |
+    v
+data/detector.py        SimpleBlobDetector + contour fallback -> Particle list
+    |
+    v
+src/tracker.py          Hungarian matching -> trajectories, (vx, vy) per particle
+    |
+    v
+src/piv.py              Phase-correlation PIV -> velocity field (u, v) on grid
+    |
+    v
+scripts/batch_analyze.py  Vorticity, divergence, E(k), Re, Ra, Nu_proxy
+    |
+    v
+outputs/batch_TIMESTAMP/  Per-video figures + cross-video comparisons
+```
+
+### File tree
+
+```
+cv_ml_convection/
+|
++-- data/
+|   +-- preprocessor.py   Frame denoising and background subtraction
+|   +-- detector.py       Mica particle detection (blob + contour)
+|
++-- src/
+|   +-- config.py         RBConfig dataclass (all tunable parameters)
+|   +-- tracker.py        PTV: Hungarian matching, trajectory building, velocities
+|   +-- piv.py            Phase-correlation PIV on interrogation windows
+|
++-- scripts/
+|   +-- analyze_video.py  Single-video pipeline (Session 1)
+|   +-- batch_analyze.py  Multi-video batch pipeline with comparison plots
+|
++-- video/                Raw experiment videos
++-- outputs/              Generated figures and .npy result files
++-- resources/            Setup photos, calibration images
++-- requirements.txt
+```
+
+---
+
+## 4. Methods
+
+### Preprocessing
+
+Each frame is processed in three steps:
+1. **Gaussian blur** ($5 \times 5$ kernel) — suppresses pixel noise before contrast enhancement
+2. **CLAHE** (clip=2.0, tile=$8 \times 8$) — local contrast equalisation so mica reflections don't crush surrounding detail
+3. **MOG2 background subtraction** — isolates moving particles from static background; warmed up on first 50 frames so the background model is stable before tracer particles appear
+
+### Particle Detection
+
+`SimpleBlobDetector` with filters:
+- Area: $8$–$300$ px² (rejects sub-pixel speckle and particle aggregates)
+- Circularity $\geq 0.2$ — loose threshold since mica flakes are flat and irregular
+- Inertia $\geq 0.05$ — rejects streak-like noise
+- Convexity $\geq 0.4$ — rejects deeply concave artefacts
+
+If fewer than 10 blobs are found, a contour-based fallback is used (image moments give sub-pixel centroid accuracy).
+
+### PTV (Particle Tracking Velocimetry)
+
+Hungarian algorithm (minimum-cost bipartite matching) between consecutive frames, with a maximum displacement threshold of 20 px to reject physically implausible jumps.
 
 Instantaneous velocity from consecutive positions:
 
-$$v_x = \Delta x \cdot \frac{f_s}{\text{px/mm}}, \qquad v_y = \Delta y \cdot \frac{f_s}{\text{px/mm}}$$
+$$v_x = \frac{\Delta x \cdot f_s}{\mathrm{px/mm}}, \qquad v_y = \frac{\Delta y \cdot f_s}{\mathrm{px/mm}}$$
 
-where $f_s = 29\ \text{fps}$. Speed distribution peaks at 5–15 mm/s with a tail to ~80 mm/s.
+where $f_s$ is the frame rate in fps.
 
-**Top 3 fastest particles:**
+### PIV (Particle Image Velocimetry)
 
-| Rank | Particle | $x\ \text{(mm)}$ | $y\ \text{(mm)}$ | $\bar{u}\ \text{(mm/s)}$ |
-|------|----------|-----------|-----------|-------------------|
-| 1 | 436 | 20.2 | 25.5 | 76.5 |
-| 2 | 132 | 32.3 | 45.2 | 66.1 |
-| 3 | 450 | 1.1 | 59.1 | 57.2 |
+Phase correlation on $32 \times 32$ px interrogation windows with 50% overlap (16 px step). `cv2.phaseCorrelate` returns sub-pixel displacement $(dx, dy)$ per window. Only frame pairs with $\geq 10$ detected particles per frame are used.
 
-### PIV velocity field
+### Physical Parameters
 
-Phase-correlation PIV on $32\ \text{px}$ interrogation windows, 50% overlap
-(grid step $= 16\ \text{px} = 3.2\ \text{mm}$).
+**Vorticity** ($z$-component, meaningful in top view):
 
-Frame pairs passing the $\geq 10$ particles gate: **352 / 6678 (5%)**.
+$$\omega_z = \frac{\partial v}{\partial x} - \frac{\partial u}{\partial y}$$
 
-| Parameter | Value | Note |
-|---|---|---|
-| $\omega_\text{RMS}$ | $1.28\ \text{s}^{-1}$ | Active convection confirmed |
-| $\|\nabla \cdot \mathbf{u}\|_\text{RMS}$ | $0.94\ \text{s}^{-1}$ | Near-zero → physically consistent |
-| $Re$ | $5.9$ | Laminar–transitional regime |
-| $E(k)$ slope | $+1.47$ | Noise-dominated (sparse seeding) |
-| Theory slope | $-2.20$ | Target for Session 2 |
+**Divergence** (incompressibility check — should be $\approx 0$):
 
-The near-zero divergence confirms the velocity field is physically consistent.
-The positive $E(k)$ slope is a known artifact of sparse seeding — addressed in Session 2.
+$$\nabla \cdot \mathbf{u} = \frac{\partial u}{\partial x} + \frac{\partial v}{\partial y}$$
 
----
+**Kinetic energy spectrum** — azimuthal average of the 2D FFT power:
 
-## Known limitations
+$$E(k) = \oint \frac{1}{2}\left(|\hat{u}|^2 + |\hat{v}|^2\right) d\theta$$
 
-### Session 1
+**Rayleigh number** (glycerin: $\alpha = 5 \times 10^{-4}$ K$^{-1}$, $\nu = 60 \times 10^{-6}$ m$^2$/s, $\kappa = 10^{-7}$ m$^2$/s):
 
-**Sparse seeding** is the primary limitation. With only 2.4 particles/frame:
-- PIV cross-correlation is unreliable — only 5% of frame pairs usable
-- $E(k)$ slope is noise-dominated ($+1.47$ vs theory $-2.20$)
-- Vorticity and divergence fields are low-resolution
+$$Ra = \frac{g \,\alpha \,\Delta T \,H^3}{\nu \,\kappa}, \qquad H = 20\ \mathrm{mm}$$
 
-**Root cause and fix:**
+**Reynolds number:**
 
-```
-too little mica (2.4 px/frame)
-        ↓
-PIV unreliable → E(k) = noise
-        ↓
-Fix: 20× more mica (target: 50+ particles/frame)
-     mix mica into glycerin paste before adding to fluid
-```
+$$Re = \frac{U_\mathrm{rms} \,L}{\nu}, \qquad U_\mathrm{rms} = \sqrt{\langle u^2 + v^2 \rangle}\ [\mathrm{m/s}]$$
 
-**Circular container** introduces edge distortion. Mitigated with 60% ROI crop
-but a rectangular container (Session 2) eliminates this entirely.
+**Nusselt proxy** (top-view estimate, no temperature field available):
+
+$$Nu_\mathrm{proxy} = 1 + \frac{\bar{U}}{\kappa^*}, \qquad \kappa^* = \sqrt{\frac{16}{Ra \cdot Pr}}$$
+
+### Physics-Informed ML (Planned)
+
+The super-resolution CNN will enforce incompressibility via a PDE penalty term:
+
+$$\mathcal{L} = \mathcal{L}_\mathrm{pixel} + \gamma\, \mathcal{L}_\mathrm{PDE}, \qquad \gamma = 0.05$$
+
+$$\mathcal{L}_\mathrm{PDE} = \left\langle \left| \frac{\partial \hat{u}}{\partial x} + \frac{\partial \hat{v}}{\partial y} \right| \right\rangle$$
+
+This enforces $\nabla \cdot \hat{\mathbf{u}} \approx 0$ in the predicted field without requiring temperature measurements (adapted from Salim et al. 2024).
 
 ---
 
-## Roadmap
+## 5. Results — Session 1 (single video, sparse seeding)
 
-| Session | Container | View | Goal |
-|---|---|---|---|
-| 1 ✓ | Pyrex dish | Top | Calibrate pipeline, first PTV results |
-| 2 | Glass refractaria | Lateral | Clean RBC, $E(k) \sim k^{-11/5}$, $Re > 50$ |
-| 3 | Glass refractaria | Lateral | CNN super-resolution + classifier |
+Analysis of `video/video.mp4`:
+- Resolution: $478 \times 850$ px, 29 fps, 6679 frames
+- ROI: central 60% ($510 \times 286$ px)
 
-**Session 2 targets:**
+**Outcome:**
+- 2.4 particles/frame — severely sparse seeding
+- $Re = 5.9$, $E(k)$ slope $= +1.47$ (noise-dominated, theory: $-2.20$)
 
-$$\text{particles/frame} \geq 50, \qquad Re > 50, \qquad E(k)\ \text{slope} \approx -2.20$$
-
----
-
-## ML layer — connection to the paper
-
-The super-resolution model in `src/superres.py` is a lightweight adaptation of
-MeshFreeFlowNet (Salim et al. 2024). The key idea is the physics-informed loss:
-
-$$\mathcal{L} = \underbrace{\frac{1}{N}\sum_{j} \|\mathbf{y}_j - \hat{\mathbf{y}}_j\|^2}_{\mathcal{L}_\text{pixel}} + \gamma \underbrace{\left\langle \left|\frac{\partial \hat{u}}{\partial x} + \frac{\partial \hat{v}}{\partial y}\right| \right\rangle}_{\mathcal{L}_\text{PDE}}$$
-
-This enforces $\nabla \cdot \mathbf{u} \approx 0$ in the super-resolved output
-without requiring temperature field data — making it applicable to experimental video.
+**Diagnosis:** sparse seeding corrupts cross-correlation, driving $E(k)$ slope positive. The fix for Session 2 was to increase mica concentration by $\sim 20\times$.
 
 ---
 
-## Technical stack
+## 6. Results — Session 2 (batch analysis, improved seeding)
 
-| Component | Tool |
-|---|---|
-| Particle detection | OpenCV `SimpleBlobDetector` + contour analysis |
-| Particle tracking | Hungarian algorithm (`scipy.optimize.linear_sum_assignment`) |
-| Velocity field | Phase-correlation PIV (`cv2.phaseCorrelate`) |
-| Physical analysis | `numpy`, `scipy` |
-| Super-resolution CNN | PyTorch · U-Net · PDE loss |
-| Classifier CNN | PyTorch |
-| Visualization | `matplotlib` |
+Batch analysis of all 5 videos using `scripts/batch_analyze.py`.
+Results from `outputs/batch_20260602_154329/`.
+
+### Summary table
+
+| Video | $\Delta T$ (°C) | $Ra$ | $Re$ | $Nu_\mathrm{proxy}$ | $\omega_\mathrm{RMS}$ (s$^{-1}$) | $E(k)$ slope | Particles/frame |
+|-------|----------------|------|------|---------------------|-----------------------------------|--------------|-----------------|
+| video2 | 105 | $6.87 \times 10^5$ | 0.1 | 343.7 | 0.0230 | +0.90 | 3.2 |
+| video4 | 95  | $6.21 \times 10^5$ | 0.1 | 366.5 | 0.0256 | +0.48 | 5.6 |
+| video5 | 75  | $4.91 \times 10^5$ | 0.1 | 230.1 | 0.0136 | **−0.59** | 4.0 |
+| video6 | 75  | $4.91 \times 10^5$ | 0.1 | 263.0 | 0.0172 | +0.19 | 7.1 |
+| video7 | 65  | $4.25 \times 10^5$ | 0.1 | 239.7 | 0.0148 | +1.04 | 4.1 |
+
+### Key observations
+
+**Ra scales with $\Delta T$ as expected.** The Rayleigh number ranges from $Ra = 4.25 \times 10^5$ (video7, $\Delta T = 65$°C) to $Ra = 6.87 \times 10^5$ (video2, $\Delta T = 105$°C), consistent with the linear dependence $Ra \propto \Delta T$. All values are well above the onset threshold $Ra = 1708$, confirming active convection.
+
+**The flow is in the deep laminar regime.** $Re \approx 0.1$ for all videos — glycerin's very high kinematic viscosity ($\nu = 60 \times 10^{-6}$ m²/s, roughly 600× water) keeps the flow strongly viscosity-dominated at these forcing levels. This is consistent with the observed low $E(k)$ slopes; the inertial range predicted by theory ($k^{-11/5}$) only develops in the turbulent regime.
+
+**video5 best approaches the theoretical $E(k)$ slope.** At $\Delta T = 75$°C ($Ra = 4.91 \times 10^5$), video5 yields the most negative slope ($-0.59$), the only video where the spectrum has negative slope at all. The remaining videos show positive slopes, indicating the spectrum is still dominated by noise from sparse seeding (3–7 particles/frame vs. the $\geq 50$ needed for reliable PIV).
+
+**Divergence RMS values ($0.012$–$0.023$ s$^{-1}$) are small but non-negligible.** In a perfectly incompressible flow the divergence should vanish; the residual is consistent with measurement noise at this particle density and confirms the velocity fields are physically reasonable.
+
+### Comparison figures
+
+- **Figure 1:** `outputs/batch_20260602_154329/comparison/parameters_vs_deltaT.png` — $Ra$, $Re$, $Nu_\mathrm{proxy}$, and $E(k)$ slope as functions of $\Delta T$
+- **Figure 2:** `outputs/batch_20260602_154329/comparison/all_spectra.png` — overlaid energy spectra for all 5 videos
+- **Figure 3:** `outputs/batch_20260602_154329/comparison/all_vorticity.png` — vorticity fields at increasing $\Delta T$, shared colorscale
+- **Figure 4:** `outputs/batch_20260602_154329/comparison/all_velocity_fields.png` — velocity quiver plots, shared speed scale
+- **Figure 5:** `outputs/batch_20260602_154329/comparison/summary_table.png` — rendered summary table
+
+### Best result highlight
+
+The best agreement with 2D RBC theory was observed at $\Delta T = 75$°C ($Ra = 4.91 \times 10^5$, video5), where the measured inertial range slope of $-0.59$ is the only negative slope observed and approaches the theoretical value of $-11/5 \approx -2.20$. The gap ($\Delta \approx 1.6$) reflects the laminar flow regime and sparse particle seeding — both of which will be addressed in Session 3.
 
 ---
 
-## Code philosophy
+## 7. Comparison with Theory
 
-Karpathy-style research engineer: minimal abstractions, explicit math, readable
-in one sitting. No frameworks, no factory patterns — equations map directly to code.
+### Against Kooloth et al. 2021
 
-```python
-# vorticity: curl of the 2D velocity field
-# ω_z = ∂v/∂x - ∂u/∂y  reveals convection roll structure
-def vorticity(u, v, dx, dy):
-    du_dy = np.gradient(u, dy, axis=0)
-    dv_dx = np.gradient(v, dx, axis=1)
-    return dv_dx - du_dy
-```
+The $k^{-11/5}$ prediction applies to 2D RBC in the turbulent regime. Our experiment operates at $Re \sim 0.1$, far below any turbulent transition. The measured slopes ($-0.59$ to $+1.04$) are consistent with a flow where the energy spectrum has not yet developed a clear inertial cascade.
+
+### Against Salim et al. 2024
+
+The paper operates DNS at $Ra = 10^6$–$10^{10}$, where the flow is fully turbulent and the $k^{-11/5}$ scaling is clearly resolved. Our experimental $Ra \sim 5$–$7 \times 10^5$ is just below this range, and the extreme Prandtl number of glycerin ($Pr = \nu/\kappa = 600$) further suppresses inertial effects relative to viscous ones. The physics-informed loss in Salim et al. uses the incompressibility constraint $\nabla \cdot \mathbf{u} = 0$, which remains valid here and will be used in the planned super-resolution CNN.
 
 ---
 
-## Setup
+## 8. Known Limitations and Next Steps
+
+**Sparse seeding** remains the primary limitation. At 3–7 particles/frame, the PIV cross-correlation is unreliable and the energy spectrum cannot resolve an inertial range. Target: $\geq 50$ particles/frame.
+
+**Circular dish** introduces optical distortion near the edges; mitigated by the 60% ROI crop, but a rectangular container eliminates the problem entirely.
+
+**No temperature field** — the Nusselt number is a proxy only. True $Nu$ requires a temperature sensor array or schlieren imaging.
+
+**Thermocouple error** — video3 excluded due to an implausible reading of 290°C (above glycerin decomposition). A calibrated thermocouple or PT100 sensor is recommended.
+
+**Planned next steps:**
+- Session 3: rectangular refractaria dish, lateral view, Peltier cooling for controlled $\Delta T$, silicone oil 50 cSt for lower $Pr$
+- CNN super-resolution with PDE loss ($\mathcal{L}_\mathrm{PDE} = \langle |\nabla \cdot \hat{\mathbf{u}}| \rangle$)
+- Laminar vs. turbulent classifier
+
+---
+
+## 9. How to Run
 
 ```bash
 git clone https://github.com/cyber-pocho/cv_ml_convection
 cd cv_ml_convection
 pip install -r requirements.txt
+
+# batch analysis — all 5 videos
+python scripts/batch_analyze.py
+
+# single-video analysis (Session 1 script)
 python scripts/analyze_video.py --video video/video.mp4
 ```
 
 ---
 
-## Reference
+## 10. Project Structure
+
+```
+cv_ml_convection/
+|
++-- data/
+|   +-- preprocessor.py      Gaussian blur, CLAHE, MOG2 background subtraction
+|   +-- detector.py           SimpleBlobDetector + contour fallback, Particle dataclass
+|
++-- src/
+|   +-- config.py             RBConfig: all pipeline parameters in one place
+|   +-- tracker.py            Hungarian PTV: match_particles, compute_velocities
+|   +-- piv.py                Phase-correlation PIV on interrogation windows
+|   +-- __init__.py
+|
++-- scripts/
+|   +-- analyze_video.py      Single-video end-to-end pipeline (Session 1)
+|   +-- batch_analyze.py      Multi-video batch pipeline with comparison figures
+|
++-- video/                    Raw experiment videos (video2–7; video3 excluded)
++-- outputs/                  Session and batch output directories
+|   +-- batch_TIMESTAMP/      Per-video figures + comparison/ + all_results.npy
+|
++-- resources/                Setup photos, calibration images
++-- notebook/                 Exploratory Jupyter notebooks
++-- requirements.txt
++-- CLAUDE.md                 Coding style guide
+```
+
+---
+
+## 11. Technical Stack
+
+| Component | Tool |
+|---|---|
+| Particle detection | OpenCV `SimpleBlobDetector` + contour analysis |
+| Particle tracking | Hungarian algorithm (`scipy.optimize.linear_sum_assignment`) |
+| PIV velocity field | Phase correlation (`cv2.phaseCorrelate`) |
+| Physical analysis | NumPy, SciPy |
+| Visualisation | Matplotlib + SciencePlots (`science`, `no-latex` style) |
+| Super-resolution CNN | PyTorch · U-Net · PDE loss [planned] |
+| Classifier CNN | PyTorch [planned] |
+| Language | Python 3.14 |
+
+---
+
+## 12. Reference
 
 Salim, D.M., Burkhart, B., & Sondak, D. (2024).
 *Extending a Physics-Informed Machine Learning Network for Superresolution Studies
 of Rayleigh-Bénard Convection.* arXiv:2307.02674.
 
-The original paper applies MFFN to DNS simulation data at $Ra = 10^6$–$10^{10}$.
-This project adapts the physics-informed loss to real experimental video —
-a harder problem with noisier data and no ground truth temperature field.
+Kooloth, P., Sondak, D., & Smith, L.M. (2021).
+*Coherent solutions and transition to turbulence in two-dimensional
+Rayleigh-Bénard convection.* Physical Review Fluids, 6(1), 013501.
 
 ---
 

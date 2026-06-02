@@ -12,3 +12,4 @@ scikit-image>=0.20.0
 matplotlib>=3.7.1
 seaborn>=0.12.2
 plotly>=5.14.1
+SciencePlots>=2.0.0
