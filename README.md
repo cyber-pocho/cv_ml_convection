@@ -8,7 +8,7 @@ Experimental fluid dynamics + computer vision + physics-informed ML.
 
 Rayleigh-Bénard Convection (RBC) is the buoyancy-driven flow that arises when a fluid
 layer is heated from below and cooled from above. Past a critical temperature difference,
-the fluid spontaneously organises into convection rolls — rising hot plumes and sinking
+the fluid spontaneously organizes into convection rolls — rising hot plumes and sinking
 cold columns — visible through reflective tracer particles.
 
 ### Governing equations (Boussinesq approximation)
@@ -132,7 +132,7 @@ cv_ml_convection/
 
 Each frame is processed in three steps:
 1. **Gaussian blur** ($5 \times 5$ kernel) — suppresses pixel noise before contrast enhancement
-2. **CLAHE** (clip=2.0, tile=$8 \times 8$) — local contrast equalisation so mica reflections don't crush surrounding detail
+2. **CLAHE** (clip=2.0, tile=$8 \times 8$) — local contrast equalization so mica reflections don't crush surrounding detail
 3. **MOG2 background subtraction** — isolates moving particles from static background; warmed up on first 50 frames so the background model is stable before tracer particles appear
 
 ### Particle Detection
@@ -141,7 +141,7 @@ Each frame is processed in three steps:
 - Area: $8$–$300$ px² (rejects sub-pixel speckle and particle aggregates)
 - Circularity $\geq 0.2$ — loose threshold since mica flakes are flat and irregular
 - Inertia $\geq 0.05$ — rejects streak-like noise
-- Convexity $\geq 0.4$ — rejects deeply concave artefacts
+- Convexity $\geq 0.4$ — rejects deeply concave artifacts
 
 If fewer than 10 blobs are found, a contour-based fallback is used (image moments give sub-pixel centroid accuracy).
 
@@ -238,11 +238,25 @@ Results from `outputs/batch_20260602_154329/`.
 
 ### Comparison figures
 
-- **Figure 1:** `outputs/batch_20260602_154329/comparison/parameters_vs_deltaT.png` — $Ra$, $Re$, $Nu_\mathrm{proxy}$, and $E(k)$ slope as functions of $\Delta T$
-- **Figure 2:** `outputs/batch_20260602_154329/comparison/all_spectra.png` — overlaid energy spectra for all 5 videos
-- **Figure 3:** `outputs/batch_20260602_154329/comparison/all_vorticity.png` — vorticity fields at increasing $\Delta T$, shared colorscale
-- **Figure 4:** `outputs/batch_20260602_154329/comparison/all_velocity_fields.png` — velocity quiver plots, shared speed scale
-- **Figure 5:** `outputs/batch_20260602_154329/comparison/summary_table.png` — rendered summary table
+**Figure 1 — $Ra$, $Re$, $Nu_\mathrm{proxy}$, and $E(k)$ slope as functions of $\Delta T$:**
+
+![Parameters vs ΔT](outputs/batch_20260602_154329/comparison/parameters_vs_deltaT.png)
+
+**Figure 2 — Overlaid kinetic energy spectra for all 5 videos:**
+
+![All spectra](outputs/batch_20260602_154329/comparison/all_spectra.png)
+
+**Figure 3 — Vorticity fields at increasing $\Delta T$ (shared colorscale):**
+
+![All vorticity fields](outputs/batch_20260602_154329/comparison/all_vorticity.png)
+
+**Figure 4 — Velocity fields at increasing $\Delta T$ (shared speed scale):**
+
+![All velocity fields](outputs/batch_20260602_154329/comparison/all_velocity_fields.png)
+
+**Figure 5 — Summary table:**
+
+![Summary table](outputs/batch_20260602_154329/comparison/summary_table.png)
 
 ### Best result highlight
 
@@ -334,7 +348,7 @@ cv_ml_convection/
 | Particle tracking | Hungarian algorithm (`scipy.optimize.linear_sum_assignment`) |
 | PIV velocity field | Phase correlation (`cv2.phaseCorrelate`) |
 | Physical analysis | NumPy, SciPy |
-| Visualisation | Matplotlib + SciencePlots (`science`, `no-latex` style) |
+| Visualization | Matplotlib + SciencePlots (`science`, `no-latex` style) |
 | Super-resolution CNN | PyTorch · U-Net · PDE loss [planned] |
 | Classifier CNN | PyTorch [planned] |
 | Language | Python 3.14 |
